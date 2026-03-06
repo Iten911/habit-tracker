@@ -8,9 +8,17 @@ import { supabase } from "@/lib/supabase";
 type HabitRow = {
   id: number;
   title: string;
-  completed: boolean;
   created_at: string;
   user_id: string;
+};
+
+type HabitEntryRow = {
+  id: number;
+  habit_id: number;
+  user_id: string;
+  entry_date: string;
+  completed: boolean;
+  created_at: string;
 };
 
 type ProfileRow = {
@@ -18,6 +26,14 @@ type ProfileRow = {
   username: string;
   created_at: string;
 };
+
+function getTodayDateString() {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 export default function HomePage() {
   const [habits, setHabits] = useState<Habit[]>([]);
@@ -33,6 +49,8 @@ export default function HomePage() {
   const [authLoading, setAuthLoading] = useState(true);
   const [habitsLoading, setHabitsLoading] = useState(false);
   const [message, setMessage] = useState("");
+
+  const today = getTodayDateString();
 
   useEffect(() => {
     async function loadSession() {
@@ -76,146 +94,163 @@ export default function HomePage() {
     }
 
     fetchProfile(userId);
-    fetchHabits(userId);
+    fetchHabitsForToday(userId);
   }, [userId]);
 
-async function fetchProfile(currentUserId: string) {
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", currentUserId)
-    .maybeSingle();
-
-  if (error) {
-    console.error("Fehler beim Laden des Profils:", error);
-    setCurrentUsername("Unbekannt");
-    return;
-  }
-
-  if (!data) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    const usernameFromMeta =
-      user?.user_metadata?.username?.toString().trim() || "User";
-
-    const { data: insertedProfile, error: insertError } = await supabase
+  async function fetchProfile(currentUserId: string) {
+    const { data, error } = await supabase
       .from("profiles")
-      .insert([
-        {
-          id: currentUserId,
-          username: usernameFromMeta,
-        },
-      ])
-      .select()
-      .single();
+      .select("*")
+      .eq("id", currentUserId)
+      .maybeSingle();
 
-    if (insertError) {
-      console.error("Fehler beim Erstellen des Profils:", insertError);
-      setCurrentUsername("Kein Profil");
+    if (error) {
+      console.error("Fehler beim Laden des Profils:", error);
+      setCurrentUsername("Unbekannt");
       return;
     }
 
-    const newProfile = insertedProfile as ProfileRow;
-    setCurrentUsername(newProfile.username);
-    return;
+    if (!data) {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const usernameFromMeta =
+        user?.user_metadata?.username?.toString().trim() || "User";
+
+      const { data: insertedProfile, error: insertError } = await supabase
+        .from("profiles")
+        .insert([
+          {
+            id: currentUserId,
+            username: usernameFromMeta,
+          },
+        ])
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error("Fehler beim Erstellen des Profils:", insertError);
+        setCurrentUsername("Kein Profil");
+        return;
+      }
+
+      const newProfile = insertedProfile as ProfileRow;
+      setCurrentUsername(newProfile.username);
+      return;
+    }
+
+    const profile = data as ProfileRow;
+    setCurrentUsername(profile.username);
   }
 
-  const profile = data as ProfileRow;
-  setCurrentUsername(profile.username);
-}
-
-  async function fetchHabits(currentUserId: string) {
+  async function fetchHabitsForToday(currentUserId: string) {
     setHabitsLoading(true);
 
-    const { data, error } = await supabase
+    const { data: habitsData, error: habitsError } = await supabase
       .from("habits")
-      .select("*")
+      .select("id, title, created_at, user_id")
       .eq("user_id", currentUserId)
       .order("created_at", { ascending: true });
 
-    if (error) {
-      console.error("Fehler beim Laden der Habits:", error);
+    if (habitsError) {
+      console.error("Fehler beim Laden der Habits:", habitsError);
       setHabitsLoading(false);
       return;
     }
 
-    const formattedHabits: Habit[] = (data as HabitRow[]).map((habit) => ({
-      id: habit.id,
-      title: habit.title,
-      done: habit.completed,
-    }));
+    const { data: entriesData, error: entriesError } = await supabase
+      .from("habit_entries")
+      .select("*")
+      .eq("user_id", currentUserId)
+      .eq("entry_date", today);
+
+    if (entriesError) {
+      console.error("Fehler beim Laden der Tages-Einträge:", entriesError);
+      setHabitsLoading(false);
+      return;
+    }
+
+    const habitsRows = (habitsData as HabitRow[]) ?? [];
+    const entriesRows = (entriesData as HabitEntryRow[]) ?? [];
+
+    const formattedHabits: Habit[] = habitsRows.map((habit) => {
+      const todayEntry = entriesRows.find((entry) => entry.habit_id === habit.id);
+
+      return {
+        id: habit.id,
+        title: habit.title,
+        done: todayEntry?.completed ?? false,
+      };
+    });
 
     setHabits(formattedHabits);
     setHabitsLoading(false);
   }
 
-async function handleSignUp() {
-  setMessage("");
+  async function handleSignUp() {
+    setMessage("");
 
-  const trimmedEmail = email.trim().toLowerCase();
-  const trimmedUsername = username.trim();
+    const trimmedEmail = email.trim().toLowerCase();
+    const trimmedUsername = username.trim();
 
-  if (!trimmedEmail || !password.trim() || !trimmedUsername) {
-    setMessage("Bitte E-Mail, Passwort und Benutzername eingeben.");
-    return;
-  }
+    if (!trimmedEmail || !password.trim() || !trimmedUsername) {
+      setMessage("Bitte E-Mail, Passwort und Benutzername eingeben.");
+      return;
+    }
 
-  const { data: existingProfile, error: usernameCheckError } = await supabase
-    .from("profiles")
-    .select("username")
-    .eq("username", trimmedUsername)
-    .maybeSingle();
+    const { data: existingProfile, error: usernameCheckError } = await supabase
+      .from("profiles")
+      .select("username")
+      .eq("username", trimmedUsername)
+      .maybeSingle();
 
-  if (usernameCheckError) {
-    console.error("Fehler beim Prüfen des Benutzernamens:", usernameCheckError);
-    setMessage("Benutzername konnte nicht geprüft werden.");
-    return;
-  }
+    if (usernameCheckError) {
+      console.error("Fehler beim Prüfen des Benutzernamens:", usernameCheckError);
+      setMessage("Benutzername konnte nicht geprüft werden.");
+      return;
+    }
 
-  if (existingProfile) {
-    setMessage("Dieser Benutzername ist bereits vergeben.");
-    return;
-  }
+    if (existingProfile) {
+      setMessage("Dieser Benutzername ist bereits vergeben.");
+      return;
+    }
 
-  const { error } = await supabase.auth.signUp({
-    email: trimmedEmail,
-    password,
-    options: {
-      data: {
-        username: trimmedUsername,
+    const { error } = await supabase.auth.signUp({
+      email: trimmedEmail,
+      password,
+      options: {
+        data: {
+          username: trimmedUsername,
+        },
       },
-    },
-  });
+    });
 
-  if (error) {
-    console.error("Fehler bei der Registrierung:", error);
+    if (error) {
+      console.error("Fehler bei der Registrierung:", error);
 
-    const errorMessage = error.message.toLowerCase();
+      const errorMessage = error.message.toLowerCase();
 
-    if (errorMessage.includes("already registered")) {
-      setMessage("Diese E-Mail-Adresse wird bereits verwendet.");
+      if (
+        errorMessage.includes("already registered") ||
+        errorMessage.includes("user already registered")
+      ) {
+        setMessage("Diese E-Mail-Adresse wird bereits verwendet.");
+        return;
+      }
+
+      setMessage(error.message);
       return;
     }
 
-    if (errorMessage.includes("user already registered")) {
-      setMessage("Diese E-Mail-Adresse wird bereits verwendet.");
-      return;
-    }
-
-    setMessage(error.message);
-    return;
+    setMessage("Konto erstellt. Bitte jetzt einloggen.");
+    setPassword("");
   }
-
-  setMessage("Konto erstellt. Bitte jetzt einloggen.");
-  setPassword("");
-}
 
   async function handleSignIn() {
     setMessage("");
 
-    const trimmedEmail = email.trim();
+    const trimmedEmail = email.trim().toLowerCase();
 
     if (!trimmedEmail || !password.trim()) {
       setMessage("Bitte E-Mail und Passwort eingeben.");
@@ -261,7 +296,6 @@ async function handleSignUp() {
       .insert([
         {
           title: trimmedTitle,
-          completed: false,
           user_id: userId,
         },
       ])
@@ -277,7 +311,7 @@ async function handleSignUp() {
     const newHabitFromDb: Habit = {
       id: data.id,
       title: data.title,
-      done: data.completed,
+      done: false,
     };
 
     setHabits((current) => [...current, newHabitFromDb]);
@@ -285,21 +319,53 @@ async function handleSignUp() {
   }
 
   async function toggleHabit(id: number) {
+    if (!userId) return;
+
     const habitToUpdate = habits.find((habit) => habit.id === id);
-    if (!habitToUpdate || !userId) return;
+    if (!habitToUpdate) return;
 
     const newDoneState = !habitToUpdate.done;
 
-    const { error } = await supabase
-      .from("habits")
-      .update({ completed: newDoneState })
-      .eq("id", id)
-      .eq("user_id", userId);
+    const { data: existingEntry, error: fetchEntryError } = await supabase
+      .from("habit_entries")
+      .select("*")
+      .eq("habit_id", id)
+      .eq("user_id", userId)
+      .eq("entry_date", today)
+      .maybeSingle();
 
-    if (error) {
-      console.error("Fehler beim Aktualisieren des Habits:", error);
-      setMessage(error.message);
+    if (fetchEntryError) {
+      console.error("Fehler beim Laden des Tages-Eintrags:", fetchEntryError);
+      setMessage(fetchEntryError.message);
       return;
+    }
+
+    if (existingEntry) {
+      const { error: updateError } = await supabase
+        .from("habit_entries")
+        .update({ completed: newDoneState })
+        .eq("id", existingEntry.id);
+
+      if (updateError) {
+        console.error("Fehler beim Aktualisieren des Tages-Eintrags:", updateError);
+        setMessage(updateError.message);
+        return;
+      }
+    } else {
+      const { error: insertError } = await supabase.from("habit_entries").insert([
+        {
+          habit_id: id,
+          user_id: userId,
+          entry_date: today,
+          completed: newDoneState,
+        },
+      ]);
+
+      if (insertError) {
+        console.error("Fehler beim Erstellen des Tages-Eintrags:", insertError);
+        setMessage(insertError.message);
+        return;
+      }
     }
 
     setHabits((currentHabits) =>
@@ -400,6 +466,7 @@ async function handleSignUp() {
           <p className="text-gray-600">
             Heute erledigt: {completedCount} von {habits.length}
           </p>
+          <p className="text-sm text-gray-500">Datum: {today}</p>
         </div>
 
         <button
@@ -425,10 +492,7 @@ async function handleSignUp() {
           className="flex-1 rounded-lg border p-2"
         />
 
-        <button
-          onClick={addHabit}
-          className="rounded-lg border px-4 py-2"
-        >
+        <button onClick={addHabit} className="rounded-lg border px-4 py-2">
           Hinzufügen
         </button>
       </div>
@@ -454,9 +518,7 @@ async function handleSignUp() {
 
       <div className="fixed bottom-4 right-4 rounded-lg border bg-white px-4 py-2 text-sm shadow">
         Eingeloggt als:{" "}
-        <span className="font-semibold">
-           {currentUsername || "Unbekannt"}
-        </span>
+        <span className="font-semibold">{currentUsername || "Unbekannt"}</span>
       </div>
     </main>
   );
