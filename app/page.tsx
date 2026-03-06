@@ -28,12 +28,15 @@ type ProfileRow = {
   created_at: string;
 };
 
-function getTodayDateString() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0");
-  const day = String(today.getDate()).padStart(2, "0");
+function formatDateToString(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function getTodayDateString() {
+  return formatDateToString(new Date());
 }
 
 export default function HomePage() {
@@ -462,14 +465,13 @@ export default function HomePage() {
   return (
     <main className="relative min-h-screen p-8">
       <AppMenu currentPath="/" />
-      
+
       <div className="mb-6 flex items-center justify-between gap-4">
         <div>
           <h1 className="mb-2 text-3xl font-bold">Meine Routinen</h1>
           <p className="text-gray-600">
             Heute erledigt: {completedCount} von {habits.length}
           </p>
-          <p className="text-sm text-gray-500">Datum: {today}</p>
         </div>
 
         <button
@@ -495,7 +497,10 @@ export default function HomePage() {
           className="flex-1 rounded-lg border p-2"
         />
 
-        <button onClick={addHabit} className="rounded-lg border px-4 py-2">
+        <button
+          onClick={addHabit}
+          className="rounded-lg border px-4 py-2"
+        >
           Hinzufügen
         </button>
       </div>
@@ -521,7 +526,9 @@ export default function HomePage() {
 
       <div className="fixed bottom-4 right-4 rounded-lg border bg-white px-4 py-2 text-sm shadow">
         Eingeloggt als:{" "}
-        <span className="font-semibold">{currentUsername || "Unbekannt"}</span>
+        <span className="font-semibold">
+           {currentUsername || "Unbekannt"}
+        </span>
       </div>
     </main>
   );
