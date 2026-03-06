@@ -3,7 +3,7 @@
 import Link from "next/link";
 
 type AppMenuProps = {
-  currentPath: "/" | "/dashboard";
+  currentPath: "/" | "/statistiken";
 };
 
 export default function AppMenu({ currentPath }: AppMenuProps) {
@@ -23,12 +23,12 @@ export default function AppMenu({ currentPath }: AppMenuProps) {
       </Link>
 
       <Link
-        href="/dashboard"
+        href="/statistiken"
         className={`${baseClass} ${
-          currentPath === "/dashboard" ? activeClass : inactiveClass
+          currentPath === "/statistiken" ? activeClass : inactiveClass
         }`}
       >
-        Dashboard
+        Statistiken
       </Link>
     </nav>
   );
