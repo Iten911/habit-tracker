@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import HabitCard from "@/components/HabitCard";
+import AppMenu from "@/components/AppMenu";
 import { Habit } from "@/types/habit";
 import { supabase } from "@/lib/supabase";
 
@@ -460,6 +461,8 @@ export default function HomePage() {
 
   return (
     <main className="relative min-h-screen p-8">
+      <AppMenu currentPath="/" />
+      
       <div className="mb-6 flex items-center justify-between gap-4">
         <div>
           <h1 className="mb-2 text-3xl font-bold">Meine Routinen</h1>
