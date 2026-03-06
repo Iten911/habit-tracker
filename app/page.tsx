@@ -13,14 +13,22 @@ type HabitRow = {
   user_id: string;
 };
 
+type ProfileRow = {
+  id: string;
+  username: string;
+  created_at: string;
+};
+
 export default function HomePage() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [newHabit, setNewHabit] = useState("");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [currentUsername, setCurrentUsername] = useState("");
 
   const [authLoading, setAuthLoading] = useState(true);
   const [habitsLoading, setHabitsLoading] = useState(false);
@@ -50,6 +58,7 @@ export default function HomePage() {
 
       if (!session) {
         setHabits([]);
+        setCurrentUsername("");
       }
     });
 
@@ -61,12 +70,61 @@ export default function HomePage() {
   useEffect(() => {
     if (!userId) {
       setHabits([]);
+      setCurrentUsername("");
       setHabitsLoading(false);
       return;
     }
 
+    fetchProfile(userId);
     fetchHabits(userId);
   }, [userId]);
+
+async function fetchProfile(currentUserId: string) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", currentUserId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Fehler beim Laden des Profils:", error);
+    setCurrentUsername("Unbekannt");
+    return;
+  }
+
+  if (!data) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const usernameFromMeta =
+      user?.user_metadata?.username?.toString().trim() || "User";
+
+    const { data: insertedProfile, error: insertError } = await supabase
+      .from("profiles")
+      .insert([
+        {
+          id: currentUserId,
+          username: usernameFromMeta,
+        },
+      ])
+      .select()
+      .single();
+
+    if (insertError) {
+      console.error("Fehler beim Erstellen des Profils:", insertError);
+      setCurrentUsername("Kein Profil");
+      return;
+    }
+
+    const newProfile = insertedProfile as ProfileRow;
+    setCurrentUsername(newProfile.username);
+    return;
+  }
+
+  const profile = data as ProfileRow;
+  setCurrentUsername(profile.username);
+}
 
   async function fetchHabits(currentUserId: string) {
     setHabitsLoading(true);
@@ -93,30 +151,36 @@ export default function HomePage() {
     setHabitsLoading(false);
   }
 
-  async function handleSignUp() {
-    setMessage("");
+async function handleSignUp() {
+  setMessage("");
 
-    const trimmedEmail = email.trim();
+  const trimmedEmail = email.trim();
+  const trimmedUsername = username.trim();
 
-    if (!trimmedEmail || !password.trim()) {
-      setMessage("Bitte E-Mail und Passwort eingeben.");
-      return;
-    }
-
-    const { error } = await supabase.auth.signUp({
-      email: trimmedEmail,
-      password,
-    });
-
-    if (error) {
-      console.error("Fehler bei der Registrierung:", error);
-      setMessage(error.message);
-      return;
-    }
-
-    setMessage("Konto erstellt. Du kannst dich jetzt einloggen.");
-    setPassword("");
+  if (!trimmedEmail || !password.trim() || !trimmedUsername) {
+    setMessage("Bitte E-Mail, Passwort und Benutzername eingeben.");
+    return;
   }
+
+  const { error } = await supabase.auth.signUp({
+    email: trimmedEmail,
+    password,
+    options: {
+      data: {
+        username: trimmedUsername,
+      },
+    },
+  });
+
+  if (error) {
+    console.error("Fehler bei der Registrierung:", error);
+    setMessage(error.message);
+    return;
+  }
+
+  setMessage("Konto erstellt. Bitte jetzt einloggen.");
+  setPassword("");
+}
 
   async function handleSignIn() {
     setMessage("");
@@ -253,6 +317,14 @@ export default function HomePage() {
 
         <div className="max-w-md space-y-4 rounded-xl border p-4">
           <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="Benutzername"
+            className="w-full rounded-lg border p-2"
+          />
+
+          <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -291,7 +363,7 @@ export default function HomePage() {
   }
 
   return (
-    <main className="min-h-screen p-8">
+    <main className="relative min-h-screen p-8">
       <div className="mb-6 flex items-center justify-between gap-4">
         <div>
           <h1 className="mb-2 text-3xl font-bold">Meine Routinen</h1>
@@ -340,6 +412,13 @@ export default function HomePage() {
           ))}
         </div>
       )}
+
+      <div className="fixed bottom-4 right-4 rounded-lg border bg-white px-4 py-2 text-sm shadow">
+        Eingeloggt als:{" "}
+        <span className="font-semibold">
+           {currentUsername || "Unbekannt"}
+        </span>
+      </div>
     </main>
   );
 }
