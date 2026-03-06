@@ -154,11 +154,28 @@ async function fetchProfile(currentUserId: string) {
 async function handleSignUp() {
   setMessage("");
 
-  const trimmedEmail = email.trim();
+  const trimmedEmail = email.trim().toLowerCase();
   const trimmedUsername = username.trim();
 
   if (!trimmedEmail || !password.trim() || !trimmedUsername) {
     setMessage("Bitte E-Mail, Passwort und Benutzername eingeben.");
+    return;
+  }
+
+  const { data: existingProfile, error: usernameCheckError } = await supabase
+    .from("profiles")
+    .select("username")
+    .eq("username", trimmedUsername)
+    .maybeSingle();
+
+  if (usernameCheckError) {
+    console.error("Fehler beim Prüfen des Benutzernamens:", usernameCheckError);
+    setMessage("Benutzername konnte nicht geprüft werden.");
+    return;
+  }
+
+  if (existingProfile) {
+    setMessage("Dieser Benutzername ist bereits vergeben.");
     return;
   }
 
@@ -174,6 +191,19 @@ async function handleSignUp() {
 
   if (error) {
     console.error("Fehler bei der Registrierung:", error);
+
+    const errorMessage = error.message.toLowerCase();
+
+    if (errorMessage.includes("already registered")) {
+      setMessage("Diese E-Mail-Adresse wird bereits verwendet.");
+      return;
+    }
+
+    if (errorMessage.includes("user already registered")) {
+      setMessage("Diese E-Mail-Adresse wird bereits verwendet.");
+      return;
+    }
+
     setMessage(error.message);
     return;
   }
@@ -386,6 +416,11 @@ async function handleSignUp() {
         <input
           value={newHabit}
           onChange={(e) => setNewHabit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              addHabit();
+            }
+          }}
           placeholder="Neue Routine..."
           className="flex-1 rounded-lg border p-2"
         />
@@ -400,6 +435,10 @@ async function handleSignUp() {
 
       {habitsLoading ? (
         <p>Lade Routinen...</p>
+      ) : habits.length === 0 ? (
+        <p className="text-gray-500">
+          Noch keine Routinen. Füge deine erste Routine hinzu.
+        </p>
       ) : (
         <div className="space-y-3">
           {habits.map((habit) => (
