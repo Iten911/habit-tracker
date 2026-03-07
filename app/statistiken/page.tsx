@@ -71,7 +71,8 @@ export default function StatistikenPage() {
 
   const COLORS = ["#22c55e", "#ef4444"];
 
-  const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState(true);
   const [message, setMessage] = useState("");
 
   const today = getTodayDateString();
@@ -91,7 +92,7 @@ export default function StatistikenPage() {
       }
 
       setUserId(session?.user?.id ?? null);
-      setLoading(false);
+      setAuthLoading(false);
     }
 
     loadSession();
@@ -116,12 +117,23 @@ export default function StatistikenPage() {
       setYesterdayTotalHabits(0);
       setWeekCompleted(0);
       setWeekTotalPossible(0);
+      setPageLoading(false);
       return;
     }
 
-    fetchProfile(userId);
-    fetchStatistics(userId);
+    loadStatisticsPage(userId);
   }, [userId]);
+
+  async function loadStatisticsPage(currentUserId: string) {
+    setPageLoading(true);
+
+    await Promise.all([
+      fetchProfile(currentUserId),
+      fetchStatistics(currentUserId),
+    ]);
+
+    setPageLoading(false);
+  }
 
   async function fetchProfile(currentUserId: string) {
     const { data, error } = await supabase
@@ -243,7 +255,7 @@ export default function StatistikenPage() {
     }
   }
 
-  if (loading) {
+  if (authLoading || (userId && pageLoading)) {
     return (
       <main className="min-h-screen p-8">
         <p>Lade Statistiken...</p>

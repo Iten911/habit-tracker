@@ -51,6 +51,7 @@ export default function HomePage() {
   const [currentUsername, setCurrentUsername] = useState("");
 
   const [authLoading, setAuthLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState(true);
   const [habitsLoading, setHabitsLoading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -94,12 +95,23 @@ export default function HomePage() {
       setHabits([]);
       setCurrentUsername("");
       setHabitsLoading(false);
+      setPageLoading(false);
       return;
     }
 
-    fetchProfile(userId);
-    fetchHabitsForToday(userId);
+    loadPageData(userId);
   }, [userId]);
+
+  async function loadPageData(currentUserId: string) {
+    setPageLoading(true);
+
+    await Promise.all([
+      fetchProfile(currentUserId),
+      fetchHabitsForToday(currentUserId),
+    ]);
+
+    setPageLoading(false);
+  }
 
   async function fetchProfile(currentUserId: string) {
     const { data, error } = await supabase
@@ -399,10 +411,10 @@ export default function HomePage() {
 
   const completedCount = habits.filter((habit) => habit.done).length;
 
-  if (authLoading) {
+  if (authLoading || (userId && pageLoading)) {
     return (
       <main className="min-h-screen p-8">
-        <p>Lade Anmeldung...</p>
+        <p>Lade Routinen...</p>
       </main>
     );
   }
