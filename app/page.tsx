@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import HabitCard from "@/components/HabitCard";
 import AppMenu from "@/components/AppMenu";
 import { Habit } from "@/types/habit";
@@ -55,65 +55,10 @@ export default function HomePage() {
   const [habitsLoading, setHabitsLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  const today = getTodayDateString();
+  const [today] = useState(getTodayDateString());
+  const [todayEntryMap, setTodayEntryMap] = useState<Record<number, HabitEntryRow>>({});
 
-  useEffect(() => {
-    async function loadSession() {
-      const {
-        data: { session },
-        error,
-      } = await supabase.auth.getSession();
-
-      if (error) {
-        console.error("Fehler beim Laden der Session:", error);
-      }
-
-      setUserId(session?.user?.id ?? null);
-      setAuthLoading(false);
-    }
-
-    loadSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUserId(session?.user?.id ?? null);
-
-      if (!session) {
-        setHabits([]);
-        setCurrentUsername("");
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!userId) {
-      setHabits([]);
-      setCurrentUsername("");
-      setHabitsLoading(false);
-      setPageLoading(false);
-      return;
-    }
-
-    loadPageData(userId);
-  }, [userId]);
-
-  async function loadPageData(currentUserId: string) {
-    setPageLoading(true);
-
-    await Promise.all([
-      fetchProfile(currentUserId),
-      fetchHabitsForToday(currentUserId),
-    ]);
-
-    setPageLoading(false);
-  }
-
-  async function fetchProfile(currentUserId: string) {
+  const fetchProfile = useCallback(async (currentUserId: string) => {
     const { data, error } = await supabase
       .from("profiles")
       .select("*")
@@ -158,53 +103,122 @@ export default function HomePage() {
 
     const profile = data as ProfileRow;
     setCurrentUsername(profile.username);
-  }
+  }, []);
 
-  async function fetchHabitsForToday(currentUserId: string) {
-    setHabitsLoading(true);
+  const fetchHabitsForToday = useCallback(
+    async (currentUserId: string) => {
+      setHabitsLoading(true);
 
-    const { data: habitsData, error: habitsError } = await supabase
-      .from("habits")
-      .select("id, title, created_at, user_id")
-      .eq("user_id", currentUserId)
-      .order("created_at", { ascending: true });
+      try {
+        const { data: habitsData, error: habitsError } = await supabase
+          .from("habits")
+          .select("id, title, created_at, user_id")
+          .eq("user_id", currentUserId)
+          .order("created_at", { ascending: true });
 
-    if (habitsError) {
-      console.error("Fehler beim Laden der Habits:", habitsError);
-      setHabitsLoading(false);
-      return;
+        if (habitsError) {
+          console.error("Fehler beim Laden der Habits:", habitsError);
+          return;
+        }
+
+        const { data: entriesData, error: entriesError } = await supabase
+          .from("habit_entries")
+          .select("*")
+          .eq("user_id", currentUserId)
+          .eq("entry_date", today);
+
+        if (entriesError) {
+          console.error("Fehler beim Laden der Tages-Einträge:", entriesError);
+          return;
+        }
+
+        const habitsRows = (habitsData as HabitRow[]) ?? [];
+        const entriesRows = (entriesData as HabitEntryRow[]) ?? [];
+
+        const entryMap: Record<number, HabitEntryRow> = {};
+        for (const entry of entriesRows) {
+          entryMap[entry.habit_id] = entry;
+        }
+
+        const formattedHabits: Habit[] = habitsRows.map((habit) => ({
+          id: habit.id,
+          title: habit.title,
+          done: entryMap[habit.id]?.completed ?? false,
+        }));
+
+        setTodayEntryMap(entryMap);
+        setHabits(formattedHabits);
+      } finally {
+        setHabitsLoading(false);
+      }
+    },
+    [today]
+  );
+
+  const loadPageData = useCallback(
+    async (currentUserId: string) => {
+      setPageLoading(true);
+
+      try {
+        await Promise.all([
+          fetchProfile(currentUserId),
+          fetchHabitsForToday(currentUserId),
+        ]);
+      } finally {
+        setPageLoading(false);
+      }
+    },
+    [fetchProfile, fetchHabitsForToday]
+  );
+
+  useEffect(() => {
+    async function loadSession() {
+      const {
+        data: { session },
+        error,
+      } = await supabase.auth.getSession();
+
+      if (error) {
+        console.error("Fehler beim Laden der Session:", error);
+      }
+
+      setUserId(session?.user?.id ?? null);
+      setAuthLoading(false);
     }
 
-    const { data: entriesData, error: entriesError } = await supabase
-      .from("habit_entries")
-      .select("*")
-      .eq("user_id", currentUserId)
-      .eq("entry_date", today);
+    loadSession();
 
-    if (entriesError) {
-      console.error("Fehler beim Laden der Tages-Einträge:", entriesError);
-      setHabitsLoading(false);
-      return;
-    }
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user?.id ?? null);
 
-    const habitsRows = (habitsData as HabitRow[]) ?? [];
-    const entriesRows = (entriesData as HabitEntryRow[]) ?? [];
-
-    const formattedHabits: Habit[] = habitsRows.map((habit) => {
-      const todayEntry = entriesRows.find((entry) => entry.habit_id === habit.id);
-
-      return {
-        id: habit.id,
-        title: habit.title,
-        done: todayEntry?.completed ?? false,
-      };
+      if (!session) {
+        setHabits([]);
+        setTodayEntryMap({});
+        setCurrentUsername("");
+      }
     });
 
-    setHabits(formattedHabits);
-    setHabitsLoading(false);
-  }
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
-  async function handleSignUp() {
+  useEffect(() => {
+    if (!userId) {
+      setHabits([]);
+      setTodayEntryMap({});
+      setCurrentUsername("");
+      setHabitsLoading(false);
+      setPageLoading(false);
+      return;
+    }
+
+    loadPageData(userId);
+  }, [userId, loadPageData]);
+
+  const handleSignUp = useCallback(async () => {
     setMessage("");
 
     const trimmedEmail = email.trim().toLowerCase();
@@ -261,9 +275,9 @@ export default function HomePage() {
 
     setMessage("Konto erstellt. Bitte jetzt einloggen.");
     setPassword("");
-  }
+  }, [email, password, username]);
 
-  async function handleSignIn() {
+  const handleSignIn = useCallback(async () => {
     setMessage("");
 
     const trimmedEmail = email.trim().toLowerCase();
@@ -286,9 +300,9 @@ export default function HomePage() {
 
     setMessage("Erfolgreich eingeloggt.");
     setPassword("");
-  }
+  }, [email, password]);
 
-  async function handleSignOut() {
+  const handleSignOut = useCallback(async () => {
     setMessage("");
 
     const { error } = await supabase.auth.signOut();
@@ -300,9 +314,9 @@ export default function HomePage() {
     }
 
     setMessage("Du wurdest ausgeloggt.");
-  }
+  }, []);
 
-  async function addHabit() {
+  const addHabit = useCallback(async () => {
     if (!newHabit.trim() || !userId) return;
 
     const trimmedTitle = newHabit.trim();
@@ -332,84 +346,138 @@ export default function HomePage() {
 
     setHabits((current) => [...current, newHabitFromDb]);
     setNewHabit("");
-  }
+  }, [newHabit, userId]);
 
-  async function toggleHabit(id: number) {
-    if (!userId) return;
+  const toggleHabit = useCallback(
+    async (id: number) => {
+      if (!userId) return;
 
-    const habitToUpdate = habits.find((habit) => habit.id === id);
-    if (!habitToUpdate) return;
+      const existingEntry = todayEntryMap[id];
+      const currentDone = existingEntry?.completed ?? false;
+      const newDoneState = !currentDone;
 
-    const newDoneState = !habitToUpdate.done;
+      setHabits((currentHabits) =>
+        currentHabits.map((habit) =>
+          habit.id === id ? { ...habit, done: newDoneState } : habit
+        )
+      );
 
-    const { data: existingEntry, error: fetchEntryError } = await supabase
-      .from("habit_entries")
-      .select("*")
-      .eq("habit_id", id)
-      .eq("user_id", userId)
-      .eq("entry_date", today)
-      .maybeSingle();
+      if (existingEntry) {
+        setTodayEntryMap((currentMap) => ({
+          ...currentMap,
+          [id]: {
+            ...currentMap[id],
+            completed: newDoneState,
+          },
+        }));
 
-    if (fetchEntryError) {
-      console.error("Fehler beim Laden des Tages-Eintrags:", fetchEntryError);
-      setMessage(fetchEntryError.message);
-      return;
-    }
+        const { error: updateError } = await supabase
+          .from("habit_entries")
+          .update({ completed: newDoneState })
+          .eq("id", existingEntry.id);
 
-    if (existingEntry) {
-      const { error: updateError } = await supabase
-        .from("habit_entries")
-        .update({ completed: newDoneState })
-        .eq("id", existingEntry.id);
+        if (updateError) {
+          console.error("Fehler beim Aktualisieren des Tages-Eintrags:", updateError);
+          setMessage(updateError.message);
 
-      if (updateError) {
-        console.error("Fehler beim Aktualisieren des Tages-Eintrags:", updateError);
-        setMessage(updateError.message);
-        return;
-      }
-    } else {
-      const { error: insertError } = await supabase.from("habit_entries").insert([
-        {
+          setHabits((currentHabits) =>
+            currentHabits.map((habit) =>
+              habit.id === id ? { ...habit, done: currentDone } : habit
+            )
+          );
+
+          setTodayEntryMap((currentMap) => ({
+            ...currentMap,
+            [id]: existingEntry,
+          }));
+
+          return;
+        }
+      } else {
+        const optimisticEntry: HabitEntryRow = {
+          id: -id,
           habit_id: id,
           user_id: userId,
           entry_date: today,
           completed: newDoneState,
-        },
-      ]);
+          created_at: new Date().toISOString(),
+        };
 
-      if (insertError) {
-        console.error("Fehler beim Erstellen des Tages-Eintrags:", insertError);
-        setMessage(insertError.message);
+        setTodayEntryMap((currentMap) => ({
+          ...currentMap,
+          [id]: optimisticEntry,
+        }));
+
+        const { data: insertedEntry, error: insertError } = await supabase
+          .from("habit_entries")
+          .insert([
+            {
+              habit_id: id,
+              user_id: userId,
+              entry_date: today,
+              completed: newDoneState,
+            },
+          ])
+          .select()
+          .single();
+
+        if (insertError) {
+          console.error("Fehler beim Erstellen des Tages-Eintrags:", insertError);
+          setMessage(insertError.message);
+
+          setHabits((currentHabits) =>
+            currentHabits.map((habit) =>
+              habit.id === id ? { ...habit, done: currentDone } : habit
+            )
+          );
+
+          setTodayEntryMap((currentMap) => {
+            const updatedMap = { ...currentMap };
+            delete updatedMap[id];
+            return updatedMap;
+          });
+
+          return;
+        }
+
+        setTodayEntryMap((currentMap) => ({
+          ...currentMap,
+          [id]: insertedEntry as HabitEntryRow,
+        }));
+      }
+    },
+    [today, todayEntryMap, userId]
+  );
+
+  const deleteHabit = useCallback(
+    async (id: number) => {
+      if (!userId) return;
+
+      const { error } = await supabase
+        .from("habits")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", userId);
+
+      if (error) {
+        console.error("Fehler beim Löschen des Habits:", error);
+        setMessage(error.message);
         return;
       }
-    }
 
-    setHabits((currentHabits) =>
-      currentHabits.map((habit) =>
-        habit.id === id ? { ...habit, done: newDoneState } : habit
-      )
-    );
-  }
+      setHabits((current) => current.filter((habit) => habit.id !== id));
+      setTodayEntryMap((currentMap) => {
+        const updatedMap = { ...currentMap };
+        delete updatedMap[id];
+        return updatedMap;
+      });
+    },
+    [userId]
+  );
 
-  async function deleteHabit(id: number) {
-    if (!userId) return;
-
-    const { error } = await supabase
-      .from("habits")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", userId);
-
-    if (error) {
-      console.error("Fehler beim Löschen des Habits:", error);
-      setMessage(error.message);
-      return;
-    }
-
-    setHabits((current) => current.filter((habit) => habit.id !== id));
-  }
-
-  const completedCount = habits.filter((habit) => habit.done).length;
+  const completedCount = useMemo(() => {
+    return habits.filter((habit) => habit.done).length;
+  }, [habits]);
 
   if (authLoading || (userId && pageLoading)) {
     return (
@@ -539,7 +607,7 @@ export default function HomePage() {
       <div className="fixed bottom-4 right-4 rounded-lg border bg-white px-4 py-2 text-sm shadow">
         Eingeloggt als:{" "}
         <span className="font-semibold">
-           {currentUsername || "Unbekannt"}
+          {currentUsername || "Unbekannt"}
         </span>
       </div>
     </main>

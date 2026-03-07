@@ -1,3 +1,4 @@
+import React from "react";
 import { Habit } from "@/types/habit";
 
 type HabitCardProps = {
@@ -6,7 +7,7 @@ type HabitCardProps = {
   onDelete: (id: number) => void;
 };
 
-export default function HabitCard({ habit, onToggle, onDelete }: HabitCardProps) {
+function HabitCardComponent({ habit, onToggle, onDelete }: HabitCardProps) {
   return (
     <div className="flex items-center justify-between rounded-xl border p-4">
       <span className={habit.done ? "text-lg line-through" : "text-lg"}>
@@ -31,3 +32,5 @@ export default function HabitCard({ habit, onToggle, onDelete }: HabitCardProps)
     </div>
   );
 }
+
+export default React.memo(HabitCardComponent);
