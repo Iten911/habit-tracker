@@ -1,15 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import AppMenu from "@/components/AppMenu";
 import { supabase } from "@/lib/supabase";
-import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip,
-  ResponsiveContainer
-} from "recharts";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
 type ProfileRow = {
   id: string;
@@ -20,6 +14,24 @@ type ProfileRow = {
 type HabitRow = {
   id: number;
   created_at: string;
+};
+
+type HabitEntryRow = {
+  id: number;
+  habit_id: number;
+  user_id: string;
+  entry_date: string;
+  completed: boolean;
+  created_at: string;
+};
+
+type StatisticsData = {
+  todayCompleted: number;
+  todayTotalHabits: number;
+  yesterdayCompleted: number;
+  yesterdayTotalHabits: number;
+  weekCompleted: number;
+  weekTotalPossible: number;
 };
 
 function formatDateToString(date: Date) {
@@ -55,30 +67,166 @@ export default function StatistikenPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [currentUsername, setCurrentUsername] = useState("");
 
-  const [todayCompleted, setTodayCompleted] = useState(0);
-  const [todayTotalHabits, setTodayTotalHabits] = useState(0);
-
-  const [yesterdayCompleted, setYesterdayCompleted] = useState(0);
-  const [yesterdayTotalHabits, setYesterdayTotalHabits] = useState(0);
-
-  const [weekCompleted, setWeekCompleted] = useState(0);
-  const [weekTotalPossible, setWeekTotalPossible] = useState(0);
-
-  const pieData = [
-    { name: "Erledigt", value: todayCompleted },
-    { name: "Offen", value: todayTotalHabits - todayCompleted }
-  ];
-
-  const COLORS = ["#22c55e", "#ef4444"];
+  const [statistics, setStatistics] = useState<StatisticsData>({
+    todayCompleted: 0,
+    todayTotalHabits: 0,
+    yesterdayCompleted: 0,
+    yesterdayTotalHabits: 0,
+    weekCompleted: 0,
+    weekTotalPossible: 0,
+  });
 
   const [authLoading, setAuthLoading] = useState(true);
   const [pageLoading, setPageLoading] = useState(true);
   const [message, setMessage] = useState("");
 
-  const today = getTodayDateString();
-  const yesterday = getYesterdayDateString();
-  const last7Days = getLast7DaysDates();
+  const [today] = useState(getTodayDateString());
+  const [yesterday] = useState(getYesterdayDateString());
+  const [last7Days] = useState(getLast7DaysDates());
+
   const last7DaysStart = last7Days[0];
+
+  const pieData = useMemo(() => {
+    return [
+      { name: "Erledigt", value: statistics.todayCompleted },
+      {
+        name: "Offen",
+        value: Math.max(0, statistics.todayTotalHabits - statistics.todayCompleted),
+      },
+    ];
+  }, [statistics.todayCompleted, statistics.todayTotalHabits]);
+
+  const COLORS = ["#22c55e", "#ef4444"];
+
+  const resetStatistics = useCallback(() => {
+    setStatistics({
+      todayCompleted: 0,
+      todayTotalHabits: 0,
+      yesterdayCompleted: 0,
+      yesterdayTotalHabits: 0,
+      weekCompleted: 0,
+      weekTotalPossible: 0,
+    });
+  }, []);
+
+  const fetchProfile = useCallback(async (currentUserId: string) => {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", currentUserId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Fehler beim Laden des Profils:", error);
+      setCurrentUsername("Unbekannt");
+      return;
+    }
+
+    if (!data) {
+      setCurrentUsername("Kein Profil");
+      return;
+    }
+
+    const profile = data as ProfileRow;
+    setCurrentUsername(profile.username);
+  }, []);
+
+  const fetchStatistics = useCallback(
+    async (currentUserId: string) => {
+      setMessage("");
+
+      const [{ data: habitsData, error: habitsError }, { data: entriesData, error: entriesError }] =
+        await Promise.all([
+          supabase
+            .from("habits")
+            .select("id, created_at")
+            .eq("user_id", currentUserId),
+          supabase
+            .from("habit_entries")
+            .select("id, habit_id, user_id, entry_date, completed, created_at")
+            .eq("user_id", currentUserId)
+            .gte("entry_date", last7DaysStart)
+            .lte("entry_date", today)
+            .eq("completed", true),
+        ]);
+
+      if (habitsError) {
+        console.error("Fehler beim Laden der Habits:", habitsError);
+        setMessage(habitsError.message);
+        return;
+      }
+
+      if (entriesError) {
+        console.error("Fehler beim Laden der Einträge:", entriesError);
+        setMessage(entriesError.message);
+        return;
+      }
+
+      const habits = (habitsData as HabitRow[]) ?? [];
+      const entries = (entriesData as HabitEntryRow[]) ?? [];
+
+      const habitCreatedDates = habits.map((habit) => habit.created_at.slice(0, 10));
+
+      const todayTotalHabits = habitCreatedDates.filter(
+        (createdDate) => createdDate <= today
+      ).length;
+
+      const yesterdayTotalHabits = habitCreatedDates.filter(
+        (createdDate) => createdDate <= yesterday
+      ).length;
+
+      let weekTotalPossible = 0;
+
+      for (const day of last7Days) {
+        for (const createdDate of habitCreatedDates) {
+          if (createdDate <= day) {
+            weekTotalPossible += 1;
+          }
+        }
+      }
+
+      let todayCompleted = 0;
+      let yesterdayCompleted = 0;
+
+      for (const entry of entries) {
+        if (entry.entry_date === today) {
+          todayCompleted += 1;
+        }
+
+        if (entry.entry_date === yesterday) {
+          yesterdayCompleted += 1;
+        }
+      }
+
+      const weekCompleted = entries.length;
+
+      setStatistics({
+        todayCompleted,
+        todayTotalHabits,
+        yesterdayCompleted,
+        yesterdayTotalHabits,
+        weekCompleted,
+        weekTotalPossible,
+      });
+    },
+    [last7Days, last7DaysStart, today, yesterday]
+  );
+
+  const loadStatisticsPage = useCallback(
+    async (currentUserId: string) => {
+      setPageLoading(true);
+
+      try {
+        await Promise.all([
+          fetchProfile(currentUserId),
+          fetchStatistics(currentUserId),
+        ]);
+      } finally {
+        setPageLoading(false);
+      }
+    },
+    [fetchProfile, fetchStatistics]
+  );
 
   useEffect(() => {
     async function loadSession() {
@@ -101,149 +249,30 @@ export default function StatistikenPage() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserId(session?.user?.id ?? null);
+
+      if (!session) {
+        setCurrentUsername("");
+        resetStatistics();
+      }
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [resetStatistics]);
 
   useEffect(() => {
     if (!userId) {
       setCurrentUsername("");
-      setTodayCompleted(0);
-      setTodayTotalHabits(0);
-      setYesterdayCompleted(0);
-      setYesterdayTotalHabits(0);
-      setWeekCompleted(0);
-      setWeekTotalPossible(0);
+      resetStatistics();
       setPageLoading(false);
       return;
     }
 
     loadStatisticsPage(userId);
-  }, [userId]);
+  }, [userId, loadStatisticsPage, resetStatistics]);
 
-  async function loadStatisticsPage(currentUserId: string) {
-    setPageLoading(true);
-
-    await Promise.all([
-      fetchProfile(currentUserId),
-      fetchStatistics(currentUserId),
-    ]);
-
-    setPageLoading(false);
-  }
-
-  async function fetchProfile(currentUserId: string) {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", currentUserId)
-      .maybeSingle();
-
-    if (error) {
-      console.error("Fehler beim Laden des Profils:", error);
-      setCurrentUsername("Unbekannt");
-      return;
-    }
-
-    if (!data) {
-      setCurrentUsername("Kein Profil");
-      return;
-    }
-
-    const profile = data as ProfileRow;
-    setCurrentUsername(profile.username);
-  }
-
-  async function fetchStatistics(currentUserId: string) {
-    setMessage("");
-
-    const { data: habitsData, error: habitsError } = await supabase
-      .from("habits")
-      .select("id, created_at")
-      .eq("user_id", currentUserId);
-
-    if (habitsError) {
-      console.error("Fehler beim Laden der Habits:", habitsError);
-      setMessage(habitsError.message);
-      return;
-    }
-
-    const habits = (habitsData as HabitRow[]) ?? [];
-
-    const todayTotal = habits.filter((habit) => {
-      const createdDate = habit.created_at.slice(0, 10);
-      return createdDate <= today;
-    }).length;
-
-    const yesterdayTotal = habits.filter((habit) => {
-      const createdDate = habit.created_at.slice(0, 10);
-      return createdDate <= yesterday;
-    }).length;
-
-    let weekTotal = 0;
-
-    for (const day of last7Days) {
-      const habitsAvailableThatDay = habits.filter((habit) => {
-        const createdDate = habit.created_at.slice(0, 10);
-        return createdDate <= day;
-      }).length;
-
-      weekTotal += habitsAvailableThatDay;
-    }
-
-    setTodayTotalHabits(todayTotal);
-    setYesterdayTotalHabits(yesterdayTotal);
-    setWeekTotalPossible(weekTotal);
-
-    const { data: todayEntries, error: todayError } = await supabase
-      .from("habit_entries")
-      .select("id")
-      .eq("user_id", currentUserId)
-      .eq("entry_date", today)
-      .eq("completed", true);
-
-    if (todayError) {
-      console.error("Fehler beim Laden von heute:", todayError);
-      setMessage(todayError.message);
-      return;
-    }
-
-    const { data: yesterdayEntries, error: yesterdayError } = await supabase
-      .from("habit_entries")
-      .select("id")
-      .eq("user_id", currentUserId)
-      .eq("entry_date", yesterday)
-      .eq("completed", true);
-
-    if (yesterdayError) {
-      console.error("Fehler beim Laden von gestern:", yesterdayError);
-      setMessage(yesterdayError.message);
-      return;
-    }
-
-    const { data: weekEntries, error: weekError } = await supabase
-      .from("habit_entries")
-      .select("id")
-      .eq("user_id", currentUserId)
-      .gte("entry_date", last7DaysStart)
-      .lte("entry_date", today)
-      .eq("completed", true);
-
-    if (weekError) {
-      console.error("Fehler beim Laden der letzten 7 Tage:", weekError);
-      setMessage(weekError.message);
-      return;
-    }
-
-    setTodayCompleted(todayEntries?.length ?? 0);
-    setYesterdayCompleted(yesterdayEntries?.length ?? 0);
-    setWeekCompleted(weekEntries?.length ?? 0);
-  }
-
-  async function handleSignOut() {
+  const handleSignOut = useCallback(async () => {
     setMessage("");
 
     const { error } = await supabase.auth.signOut();
@@ -253,7 +282,7 @@ export default function StatistikenPage() {
       setMessage(error.message);
       return;
     }
-  }
+  }, []);
 
   if (authLoading || (userId && pageLoading)) {
     return (
@@ -297,7 +326,7 @@ export default function StatistikenPage() {
         <div className="rounded-xl border p-4">
           <p className="text-sm text-gray-500">Heute</p>
           <p className="mt-2 text-3xl font-bold">
-            {todayCompleted} / {todayTotalHabits}
+            {statistics.todayCompleted} / {statistics.todayTotalHabits}
           </p>
           <p className="mt-2 text-sm text-gray-500">Erledigte Routinen heute</p>
         </div>
@@ -305,7 +334,7 @@ export default function StatistikenPage() {
         <div className="rounded-xl border p-4">
           <p className="text-sm text-gray-500">Gestern</p>
           <p className="mt-2 text-3xl font-bold">
-            {yesterdayCompleted} / {yesterdayTotalHabits}
+            {statistics.yesterdayCompleted} / {statistics.yesterdayTotalHabits}
           </p>
           <p className="mt-2 text-sm text-gray-500">
             Erledigte Routinen gestern
@@ -315,7 +344,7 @@ export default function StatistikenPage() {
         <div className="rounded-xl border p-4">
           <p className="text-sm text-gray-500">Letzte 7 Tage</p>
           <p className="mt-2 text-3xl font-bold">
-            {weekCompleted} / {weekTotalPossible}
+            {statistics.weekCompleted} / {statistics.weekTotalPossible}
           </p>
           <p className="mt-2 text-sm text-gray-500">
             Erledigte Häkchen in 7 Tagen
@@ -338,7 +367,7 @@ export default function StatistikenPage() {
               label
             >
               {pieData.map((entry, index) => (
-                <Cell key={index} fill={COLORS[index % COLORS.length]} />
+                <Cell key={entry.name} fill={COLORS[index % COLORS.length]} />
               ))}
             </Pie>
 
